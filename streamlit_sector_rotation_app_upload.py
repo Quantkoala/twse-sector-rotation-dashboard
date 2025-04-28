@@ -2,114 +2,102 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import requests
 import requests_cache
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime, timedelta
 
-# === Must be FIRST Streamlit command ===
-st.set_page_config(page_title="TWSE Sector Rotation Dashboard", layout="wide")
+# === Page Config ===
+st.set_page_config(page_title="Macro-Sector Correlation Dashboard", layout="wide")
 
-# === Version Indicator ===
-APP_VERSION = "v1.2.0 - CIO Commentary Upgrade"
-st.sidebar.markdown(f"**📄 App Version:** `{APP_VERSION}`")
+# === API Key ===
+FRED_API_KEY = "d11aa169b82fc4ab22a64e20b8e35ecd"
 
-# --- Sidebar ---
-st.sidebar.title("⚙️ Settings")
-uploaded_file = st.sidebar.file_uploader("Upload your watchlist.csv", type="csv")
+# === Sidebar Navigation ===
+page = st.sidebar.radio("Navigation", ["Sector Dashboard", "Macro Correlation"])
 
-if uploaded_file:
-    watchlist = pd.read_csv(uploaded_file)['Ticker'].dropna().tolist()
-else:
-    st.sidebar.warning("Please upload a watchlist.csv to proceed.")
-    st.stop()
+if page == "Macro Correlation":
+    st.title("🌐 Macro ↔ Sector Correlation Analysis")
 
-start_date = st.sidebar.date_input("Start Date", datetime.today() - timedelta(days=365*10))
-end_date = st.sidebar.date_input("End Date", datetime.today())
+    # --- Fetch Macro Data from FRED ---
+    def fetch_fred_series(series_id, start_date):
+        url = f"https://api.stlouisfed.org/fred/series/observations"
+        params = {
+            "series_id": series_id,
+            "api_key": FRED_API_KEY,
+            "file_type": "json",
+            "observation_start": start_date
+        }
+        response = requests.get(url, params=params)
+        data = response.json()
+        df = pd.DataFrame(data['observations'])
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        df = df[['value']].astype(float)
+        df.rename(columns={'value': series_id}, inplace=True)
+        return df
 
-# --- Data Fetching ---
-st.title("📊 TWSE Sector Rotation Intelligence Dashboard")
-st.info("Fetching live data...")
+    st.info("Fetching macroeconomic data from FRED...")
+    start_macro = (datetime.today() - timedelta(days=365*10)).strftime('%Y-%m-%d')
+    rate_df = fetch_fred_series("FEDFUNDS", start_macro)
+    cpi_df = fetch_fred_series("CPIAUCSL", start_macro)
 
-@st.cache_data(show_spinner=False)
-def fetch_data(tickers, start, end):
-    records = []
-    sectors = {}
-    with requests_cache.CachedSession():
-        for tkr in tickers:
-            try:
-                tk = yf.Ticker(tkr)
-                hist = tk.history(start=start, end=end, interval='1mo')[['Volume']].reset_index()
-                hist['Ticker'] = tkr
-                records.append(hist)
-                sectors[tkr] = tk.info.get('industry', 'Unknown')
-            except:
-                continue
-    df = pd.concat(records, ignore_index=True)
-    df['Sector'] = df['Ticker'].map(sectors)
-    df['Date'] = pd.to_datetime(df['Date']).dt.to_period('M').dt.to_timestamp()
-    agg = df.groupby(['Date','Sector'])['Volume'].sum().reset_index()
-    return agg
+    macro_df = rate_df.join(cpi_df, how='outer').fillna(method='ffill')
 
-agg_df = fetch_data(watchlist, start_date, end_date)
+    # --- Fetch Sector Volume Data ---
+    st.info("Fetching sector volume data...")
+    uploaded_file = st.sidebar.file_uploader("Upload your watchlist.csv", type="csv")
 
-# --- Charts ---
-st.subheader("📈 Sector Volume Trends")
-pivot = agg_df.pivot(index='Date', columns='Sector', values='Volume').fillna(0)
-fig, ax = plt.subplots(figsize=(12,6))
-pivot.plot.area(ax=ax)
-st.pyplot(fig)
-
-st.subheader("🔥 Sector Volume Intensity Heatmap")
-pivot_norm = pivot.div(pivot.max(axis=1), axis=0)
-fig2, ax2 = plt.subplots(figsize=(15,8))
-sns.heatmap(pivot_norm.T, cmap='YlGnBu', cbar_kws={'label':'Normalized Volume'}, ax=ax2)
-st.pyplot(fig2)
-
-# --- Enhanced AI Commentary ---
-st.subheader("🧠 CIO-Level Market Commentary")
-
-latest_vol = pivot.iloc[-1]
-yoy_change = ((pivot.iloc[-1] - pivot.iloc[-13]) / pivot.iloc[-13]).replace([float('inf'), -float('inf')], 0).fillna(0)
-status = []
-for sector in pivot.columns:
-    delta = yoy_change.get(sector, 0)
-    if delta > 0.2:
-        status.append((sector, "🚀 Accumulation"))
-    elif delta < -0.1:
-        status.append((sector, "🔻 Distribution"))
-    elif 0.05 < delta <= 0.15:
-        status.append((sector, "🕵️ Stealth Buying"))
+    if uploaded_file:
+        watchlist = pd.read_csv(uploaded_file)['Ticker'].dropna().tolist()
     else:
-        status.append((sector, "Stable"))
+        st.sidebar.warning("Please upload a watchlist.csv to proceed.")
+        st.stop()
 
-top_sector = latest_vol.idxmax()
-accumulating = [s for s, stat in status if stat == "🚀 Accumulation"]
-distributing = [s for s, stat in status if stat == "🔻 Distribution"]
-stealth = [s for s, stat in status if stat == "🕵️ Stealth Buying"]
+    @st.cache_data(show_spinner=False)
+    def fetch_sector_data(tickers):
+        records = []
+        sectors = {}
+        with requests_cache.CachedSession():
+            for tkr in tickers:
+                try:
+                    tk = yf.Ticker(tkr)
+                    hist = tk.history(start=start_macro, end=datetime.today(), interval='1mo')[['Volume']].reset_index()
+                    hist['Ticker'] = tkr
+                    records.append(hist)
+                    sectors[tkr] = tk.info.get('industry', 'Unknown')
+                except:
+                    continue
+        df = pd.concat(records, ignore_index=True)
+        df['Sector'] = df['Ticker'].map(sectors)
+        df['Date'] = pd.to_datetime(df['Date']).dt.to_period('M').dt.to_timestamp()
+        agg = df.groupby(['Date','Sector'])['Volume'].sum().reset_index()
+        pivot = agg.pivot(index='Date', columns='Sector', values='Volume').fillna(0)
+        return pivot
 
-commentary = f'''
-### 1️⃣ Executive Summary
-Institutional flows are currently favoring **{top_sector}**, leading sector volumes this month. 
+    sector_vol = fetch_sector_data(watchlist)
 
-### 2️⃣ Current Sector Dynamics
-- **Accumulating Sectors**: {', '.join(accumulating) if accumulating else 'None'}
-- **Distribution Observed**: {', '.join(distributing) if distributing else 'None'}
-- **Stealth Buying Signals**: {', '.join(stealth) if stealth else 'None'}
+    # --- Align Macro & Sector Data ---
+    combined = sector_vol.join(macro_df, how='inner')
+    corr_matrix = combined.corr().loc[["FEDFUNDS", "CPIAUCSL"], sector_vol.columns]
 
-### 3️⃣ Tactical Implications
-- **Overweight**: {', '.join(accumulating) if accumulating else 'No clear candidates'}
-- **Underweight**: {', '.join(distributing) if distributing else 'None'}
-- **Watch for Breakouts**: {', '.join(stealth) if stealth else 'No stealth activity detected'}
+    # --- Plot Correlation Heatmap ---
+    st.subheader("📊 Correlation Heatmap: Macro Indicators vs. Sector Volumes")
+    fig, ax = plt.subplots(figsize=(12,6))
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, ax=ax)
+    st.pyplot(fig)
 
-### 4️⃣ Stock Picking Guidance
-Focus analyst screening on sectors in accumulation:
-- Look for strong balance sheets, dividend stability in Financials.
-- In Industrials, prioritize firms with cyclical upside.
-- Monitor Healthcare for undervalued plays amid stealth volume rises.
+    # --- AI Commentary ---
+    st.subheader("🧠 AI-Driven Insight")
+    strong_corr = corr_matrix.apply(lambda x: x.abs()).max()
+    top_sector_rate = strong_corr.idxmax()
 
-*Review charts above for visual confirmation of rotation patterns.*
-'''
+    insight = (
+        f"As of **{datetime.today().strftime('%Y-%m-%d')}**, the sector most sensitive to macro trends is **{top_sector_rate}**.\n\n"
+        f"- **Interest Rate Correlation** peaks with: `{corr_matrix.loc['FEDFUNDS'].idxmax()}`.\n"
+        f"- **Inflation Correlation** peaks with: `{corr_matrix.loc['CPIAUCSL'].idxmax()}`.\n\n"
+        "This suggests rotation behavior is heavily influenced by current monetary policy and inflation dynamics."
+    )
 
-st.markdown(commentary)
-st.success("Updated with professional AI-generated insights.")
+    st.markdown(insight)

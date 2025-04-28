@@ -57,23 +57,18 @@ else:
     st.stop()
 
 start_macro = (datetime.today() - timedelta(days=365*10)).strftime('%Y-%m-%d')
-
 sector_vol = fetch_sector_data(watchlist, start_macro)
 
 if page == "📊 Sector Dashboard":
     st.title("📊 TWSE Sector Rotation Dashboard")
-
     selected_sectors = st.multiselect("Select Sectors", sector_vol.columns.tolist(), default=sector_vol.columns.tolist()[:5])
     date_range = st.slider("Select Date Range", min_value=sector_vol.index.min().date(), max_value=sector_vol.index.max().date(),
                            value=(sector_vol.index.min().date(), sector_vol.index.max().date()))
-
     filtered = sector_vol.loc[date_range[0]:date_range[1], selected_sectors]
-
-    st.subheader("📈 Filtered Sector Volume Trends")
+    st.subheader("🔷 Filtered Sector Volume Trends")
     fig, ax = plt.subplots(figsize=(12,6))
     filtered.plot.area(ax=ax)
     st.pyplot(fig)
-
     st.subheader("🧠 AI Commentary")
     top_sector = filtered.iloc[-1].idxmax()
     st.markdown(f"**Observation:** Current rotation favors **{top_sector}** within selected sectors and timeframe.")
@@ -81,19 +76,15 @@ if page == "📊 Sector Dashboard":
 if page == "🌐 Macro Correlation":
     st.title("🌐 Macro ↔ Sector Correlation Analysis")
     st.info("Fetching macro data...")
-
     rate_df = fetch_fred_series("FEDFUNDS", start_macro)
     cpi_df = fetch_fred_series("CPIAUCSL", start_macro)
     gdp_df = fetch_fred_series("GDP", start_macro)
-
     macro_df = rate_df.join(cpi_df, how='outer').join(gdp_df, how='outer').fillna(method='ffill')
     combined = sector_vol.join(macro_df, how='inner')
     corr_matrix = combined.corr().loc[["FEDFUNDS", "CPIAUCSL", "GDP"], sector_vol.columns]
-
     st.subheader("📊 Correlation Heatmap")
     fig, ax = plt.subplots(figsize=(12,6))
     sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, ax=ax)
     st.pyplot(fig)
-
     st.subheader("🧠 AI Insight")
     st.markdown(f"**Key Insight:** Sector most sensitive to macro changes is **{corr_matrix.abs().max(axis=0).idxmax()}**.")

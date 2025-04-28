@@ -7,11 +7,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime, timedelta
 
+# === Must be FIRST Streamlit command ===
+st.set_page_config(page_title="TWSE Sector Rotation Dashboard", layout="wide")
+
 # === Version Indicator ===
 APP_VERSION = "v1.2.0 - CIO Commentary Upgrade"
 st.sidebar.markdown(f"**📄 App Version:** `{APP_VERSION}`")
-
-st.set_page_config(page_title="TWSE Sector Rotation Dashboard", layout="wide")
 
 # --- Sidebar ---
 st.sidebar.title("⚙️ Settings")

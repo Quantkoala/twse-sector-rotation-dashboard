@@ -1,6 +1,6 @@
 
-# Streamlit dashboard with full sector chart, filters, macro correlation and expanded AI commentary
-# Version: v2.2.0 – Hedge Fund-Style Dashboard
+# Streamlit dashboard with safety checks added
+# Version: v2.2.1 – With Empty Ticker Handling
 
 import streamlit as st
 import pandas as pd
@@ -12,7 +12,7 @@ import seaborn as sns
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Investment Intelligence Dashboard", page_icon="📈", layout="wide")
-st.sidebar.markdown("**📄 App Version:** `v2.2.0 – Hedge Fund-Style Dashboard`")
+st.sidebar.markdown("**📄 App Version:** `v2.2.1 – With Empty Ticker Handling`")
 
 FRED_API_KEY = "d11aa169b82fc4ab22a64e20b8e35ecd"
 
@@ -34,16 +34,29 @@ def fetch_fred_series(series_id, start):
 
 @st.cache_data(show_spinner=False)
 def get_sector_volume(tickers, start):
-    records, sectors = [], {}
+    records, sectors, invalids = [], {}, []
     session = requests_cache.CachedSession()
     for tkr in tickers:
         try:
             tk = yf.Ticker(tkr)
             hist = tk.history(start=start, end=datetime.today(), interval="1mo")[["Volume"]].reset_index()
+            if hist.empty:
+                invalids.append(tkr)
+                continue
             hist["Ticker"] = tkr
             records.append(hist)
             sectors[tkr] = tk.info.get("industry", "Unknown")
-        except: continue
+        except:
+            invalids.append(tkr)
+            continue
+
+    if invalids:
+        st.warning(f"⚠️ No data returned for: {', '.join(invalids)}")
+
+    if not records:
+        st.error("❌ No valid data was fetched for any tickers. Please check your watchlist.")
+        return pd.DataFrame()
+
     df = pd.concat(records, ignore_index=True)
     df["Sector"] = df["Ticker"].map(sectors)
     df["Date"] = pd.to_datetime(df["Date"]).dt.to_period("M").dt.to_timestamp()
@@ -58,6 +71,8 @@ if not uploaded:
 watchlist = pd.read_csv(uploaded)["Ticker"].dropna().tolist()
 START = (datetime.today() - timedelta(days=365*10)).strftime("%Y-%m-%d")
 vol = get_sector_volume(watchlist, START)
+if vol.empty:
+    st.stop()
 
 page = st.sidebar.radio("Navigation", ["📊 Sector Dashboard", "🌐 Macro Correlation"])
 
@@ -65,7 +80,6 @@ if page == "📊 Sector Dashboard":
     st.title("📊 Full Sector Rotation Dashboard")
 
     st.subheader("📈 All-Sector Volume Chart")
-    st.caption("Showing full 10-year rotation across all sectors from your watchlist")
     fig1, ax1 = plt.subplots(figsize=(12, 5))
     vol.plot.area(ax=ax1, alpha=0.7)
     ax1.set_ylabel("Volume")
